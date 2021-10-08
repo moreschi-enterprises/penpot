@@ -120,6 +120,41 @@
 
 ;; --- Interactions
 
+(defn add-new-interaction
+  ([shape] (add-new-interaction shape nil))
+  ([shape destination]
+   (ptk/reify ::add-new-interaction
+     ptk/WatchEvent
+     (watch [_ state _]
+       (rx/of (dch/update-shapes [(:id shape)]
+                (fn [shape]
+                  (let [new-interaction (cti/set-destination
+                                          cti/default-interaction
+                                          destination)]
+                    (update shape :interactions
+                            #(conj % new-interaction))))))))))
+
+(defn remove-interaction
+  [shape index]
+  (ptk/reify ::remove-interaction
+    ptk/WatchEvent
+    (watch [_ state _]
+      (rx/of (dch/update-shapes [(:id shape)]
+               (fn [shape]
+                 (update shape :interactions
+                         (fn [interactions]
+                           (into (subvec interactions 0 index)
+                                 (subvec interactions (inc index)))))))))))
+
+(defn update-interaction
+  [shape index update-fn]
+  (ptk/reify ::update-interaction
+    ptk/WatchEvent
+    (watch [_ state _]
+      (rx/of (dch/update-shapes [(:id shape)]
+               (fn [shape]
+                 (update-in shape [:interactions index] update-fn)))))))
+
 (declare move-edit-interaction)
 (declare finish-edit-interaction)
 
@@ -179,28 +214,23 @@
             shape    (get objects shape-id)]
 
         (when (and shape (not (= position initial-pos)))
-          (rx/of (dch/update-shapes [shape-id]
-                   (fn [shape]
-                     (update shape :interactions
-                             (fn [interactions]
-                               (if-not frame
-                                 ;; Drop in an empty space -> remove interaction
-                                 (if index
-                                   (into (subvec interactions 0 index)
-                                         (subvec interactions (inc index)))
-                                   interactions)
-                                 (let [frame (if (or (= (:id frame) (:id shape))
-                                                     (= (:id frame) (:frame-id shape)))
-                                               nil ;; Drop onto self frame -> set destination to none
-                                               frame)]
-                                   ;; Update or create interaction
-                                   (if (and index (cti/has-destination (get interactions index)))
-                                     (update interactions index
-                                             #(cti/set-destination % (:id frame)))
-                                     (conj (or interactions [])
-                                           (cti/set-destination cti/default-interaction
-                                                                (:id frame))))))))))))))))
+          (if (nil? frame)
+            (when index
+              (rx/of (remove-interaction shape index)))
+            (let [frame (if (or (= (:id frame) (:id shape))
+                                (= (:id frame) (:frame-id shape)))
+                          nil ;; Drop onto self frame -> set destination to none
+                          frame)]
+              (if (nil? index)
+                (rx/of (add-new-interaction shape (:id frame)))
+                (rx/of (update-interaction shape index
+                                           (fn [interaction]
+                                             (cond-> interaction
+                                               (not (cti/has-destination interaction))
+                                               (cti/set-action-type :navigate)
 
+                                               :always
+                                               (cti/set-destination (:id frame))))))))))))))
 ;; --- Overlays
 
 (declare move-overlay-pos)
